@@ -1025,6 +1025,8 @@ func (conn *UDPIPv4) SendIP(t *testing.T, ip IPv4, udp UDP, additionalLayers ...
 
 // SendFrame sends a frame on the wire and updates the state of all layers.
 func (conn *UDPIPv4) SendFrame(t *testing.T, overrideLayers Layers, additionalLayers ...Layer) {
+	t.Helper()
+
 	conn.send(t, overrideLayers, additionalLayers...)
 }
 
