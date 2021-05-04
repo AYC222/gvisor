@@ -66,6 +66,7 @@ const (
 var ipv4BroadcastAddr = header.IPv4Broadcast.WithPrefix()
 
 var _ stack.LinkResolvableNetworkEndpoint = (*endpoint)(nil)
+var _ stack.ForwardingNetworkEndpoint = (*endpoint)(nil)
 var _ stack.GroupAddressableEndpoint = (*endpoint)(nil)
 var _ stack.AddressableEndpoint = (*endpoint)(nil)
 var _ stack.NetworkEndpoint = (*endpoint)(nil)
@@ -81,6 +82,12 @@ type endpoint struct {
 	//
 	// Must be accessed using atomic operations.
 	enabled uint32
+
+	// forwarding is set to 1 when the protocol has forwarding enabled and 0
+	// when it is disabled.
+	//
+	// Must be accessed using atomic operations.
+	forwarding uint32
 
 	mu struct {
 		sync.RWMutex
@@ -151,13 +158,29 @@ func (p *protocol) forgetEndpoint(nicID tcpip.NICID) {
 	delete(p.mu.eps, nicID)
 }
 
-// transitionForwarding transitions the endpoint's forwarding status to
-// forwarding.
+// Forwarding implements stack.ForwardingNetworkEndpoint.
+func (e *endpoint) Forwarding() bool {
+	return uint8(atomic.LoadUint32(&e.forwarding)) == 1
+}
+
+// setForwarding sets the forwarding status for the endpoint.
 //
-// Must only be called when the forwarding status changes.
-func (e *endpoint) transitionForwarding(forwarding bool) {
+// Returns true if the forwarding status was updated.
+func (e *endpoint) setForwarding(v bool) bool {
+	if v {
+		return atomic.CompareAndSwapUint32(&e.forwarding, 0 /* old */, 1 /* new */)
+	}
+	return atomic.CompareAndSwapUint32(&e.forwarding, 1 /* old */, 0 /* new */)
+}
+
+// SetForwarding implements stack.ForwardingNetworkEndpoint.
+func (e *endpoint) SetForwarding(forwarding bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	if !e.setForwarding(forwarding) {
+		return
+	}
 
 	if forwarding {
 		// There does not seem to be an RFC requirement for a node to join the all
@@ -812,7 +835,7 @@ func (e *endpoint) handleValidatedPacket(h header.IPv4, pkt *stack.PacketBuffer)
 		addressEndpoint.DecRef()
 		pkt.NetworkPacketInfo.LocalAddressBroadcast = subnet.IsBroadcast(dstAddr) || dstAddr == header.IPv4Broadcast
 	} else if !e.IsInGroup(dstAddr) {
-		if !e.protocol.Forwarding() {
+		if !e.Forwarding() {
 			stats.ip.InvalidDestinationAddressesReceived.Increment()
 			return
 		}
@@ -1102,7 +1125,6 @@ func (e *endpoint) Stats() stack.NetworkEndpointStats {
 	return &e.stats.localStats
 }
 
-var _ stack.ForwardingNetworkProtocol = (*protocol)(nil)
 var _ stack.NetworkProtocol = (*protocol)(nil)
 var _ fragmentation.TimeoutHandler = (*protocol)(nil)
 
@@ -1122,12 +1144,6 @@ type protocol struct {
 	//
 	// Must be accessed using atomic operations.
 	defaultTTL uint32
-
-	// forwarding is set to 1 when the protocol has forwarding enabled and 0
-	// when it is disabled.
-	//
-	// Must be accessed using atomic operations.
-	forwarding uint32
 
 	ids    []uint32
 	hashIV uint32
@@ -1239,35 +1255,6 @@ func (*protocol) Parse(pkt *stack.PacketBuffer) (proto tcpip.TransportProtocolNu
 
 	ipHdr := header.IPv4(pkt.NetworkHeader().View())
 	return ipHdr.TransportProtocol(), !ipHdr.More() && ipHdr.FragmentOffset() == 0, true
-}
-
-// Forwarding implements stack.ForwardingNetworkProtocol.
-func (p *protocol) Forwarding() bool {
-	return uint8(atomic.LoadUint32(&p.forwarding)) == 1
-}
-
-// setForwarding sets the forwarding status for the protocol.
-//
-// Returns true if the forwarding status was updated.
-func (p *protocol) setForwarding(v bool) bool {
-	if v {
-		return atomic.CompareAndSwapUint32(&p.forwarding, 0 /* old */, 1 /* new */)
-	}
-	return atomic.CompareAndSwapUint32(&p.forwarding, 1 /* old */, 0 /* new */)
-}
-
-// SetForwarding implements stack.ForwardingNetworkProtocol.
-func (p *protocol) SetForwarding(v bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if !p.setForwarding(v) {
-		return
-	}
-
-	for _, ep := range p.mu.eps {
-		ep.transitionForwarding(v)
-	}
 }
 
 // calculateNetworkMTU calculates the network-layer payload MTU based on the
