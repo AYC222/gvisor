@@ -1815,6 +1815,55 @@ type UDPStats struct {
 	ChecksumErrors *StatCounter
 }
 
+// NICNeighborStats holds metrics for the neighbor table.
+type NICNeighborStats struct {
+	// LINT.IfChange(NICNeighborStats)
+
+	// UnreachableEntryLookups counts the number of lookups performed on an
+	// entry in Unreachable state.
+	UnreachableEntryLookups *StatCounter
+
+	// LINT.ThenChange(stack/nic_stats.go:multiCounterNICNeighborStats)
+}
+
+// NICDirectionStats includes packet and byte counts.
+type NICDirectionStats struct {
+	// LINT.IfChange(NICDirectionStats)
+
+	// Packets is the number of packets counted.
+	Packets *StatCounter
+
+	// Bytes is the number of bytes counted.
+	Bytes *StatCounter
+
+	// LINT.ThenChange(stack/nic_stats.go:multiCounterNICDirectionStats)
+}
+
+// NICStats holds NIC statistics.
+type NICStats struct {
+	// LINT.IfChange(NICStats)
+
+	// Tx contains statistics about transmitted data.
+	Tx NICDirectionStats
+
+	// Rx contains statistics about received data.
+	Rx NICDirectionStats
+
+	// DisabledRx contains statistics about received data on disabled NICs.
+	DisabledRx NICDirectionStats
+
+	// Neighbor contains statistics about neighbor entries.
+	Neighbor NICNeighborStats
+
+	// LINT.ThenChange(stack/nic_stats.go:multiCounterNICStats)
+}
+
+// FillIn returns a copy of s with nil fields initialized to new StatCounters.
+func (s NICStats) FillIn() NICStats {
+	InitStatCounters(reflect.ValueOf(&s).Elem())
+	return s
+}
+
 // Stats holds statistics about the networking stack.
 //
 // All fields are optional.
@@ -1847,6 +1896,9 @@ type Stats struct {
 
 	// UDP breaks out UDP-specific stats.
 	UDP UDPStats
+
+	// NIC breaks out NIC-specific stats.
+	NIC NICStats
 }
 
 // ReceiveErrors collects packet receive errors within transport endpoint.
